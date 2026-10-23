@@ -5,14 +5,32 @@
 
 const fs = require("fs");
 
-let total = 0;
-let count = 0;
+// Keep only the latest attempt per txn_id, since retries share the same id.
+const latestByTxn = new Map();
 
 const lines = fs.readFileSync("payments.jsonl", "utf8").split("\n").filter((l) => l.length > 0);
 for (const line of lines) {
-  const event = JSON.parse(line);
-  if (event.status === "success") {
-    total += Number(event.amount);
+  let event;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    continue; // Skip lines that aren't valid JSON.
+  }
+
+  const txnId = event.txn_id;
+  if (!txnId) continue; // Skip events without a txn_id.
+
+  const existing = latestByTxn.get(txnId);
+  if (!existing || event.ts > existing.ts) {
+    latestByTxn.set(txnId, event); // Newer timestamp replaces the stored attempt.
+  }
+}
+
+let total = 0;
+let count = 0;
+for (const event of latestByTxn.values()) {
+  if (event.status === "success") { // Only the latest attempt's status counts.
+    total += Number(String(event.amount).replace(/,/g, "")); // Some amounts have comma separators.
     count += 1;
   }
 }
